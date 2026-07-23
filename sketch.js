@@ -27,16 +27,18 @@ const START_HEILUNG = 100;   // heal,, maybe this should go
 const ALPHA_STRENGTH_MULTIPLIER = 120; // dichte lila
 const VIRTUAL_RESOLUTION_STABILITY  = 0.25; // dämpfung raster change bei y tracking
 const BLUR_FACTOR = 0.01;  // weichzeichnung memory buffer/frame
+
+// --- NEW GLOBAL STROKE ADJUSTMENT ---
+// uni line thickness
+const GLOBAL_STROKE_SCALE = 1.0; 
 // =========================================================================
 
 // ---------------------------
 const CURSOR_TIMEOUT_MS = 4000; // zeit bis curser kreis & opacity 0 8LINIE)
 const STILLSTAND_DAUER_MS = 4000; // zeit bis pausw wenn gar nichts passiert/no movement
 const BEWEGUNG_LIMIT_CAM = 0.15; // bewegungswert/threshhold für kamera active  
-const KURVEN_H_FAKTOR = 1.3;    // LINIE: kurvenhöhe 
-const LINIEN_DICKE = 0.75;  
+const KURVEN_H_FAKTOR = 0.6;    // LINIE: kurvenhöhe (Reduced from 1.3 to make height less)
 const KREUZ_STRICH_LAENGE = 15.0; // länge  richtungswechsel striche
-const KREUZ_STRICH_DICKE = 1.2; // stärke richtungswechsel striche
 const KREUZ_WINKEL_LIMIT = 35.0; // minimal winkel 
 const KREIS_GROESSE_FAKTOR = 1.8; // pausenkreise größe
 const KREIS_DECKKRAFT = 120;   
@@ -98,6 +100,7 @@ let currentView = 0; // 0=multiply, 1=blend
 let purpleColor; 
 let motionAmount = 0;
 let previousMotionAmount = 0;
+let dynamicStrokeWeight = 1; // Automatically scales with windowWidth
 
 // ----------------virtualtracking interpolation
 let virtualX = 0, virtualY = 0;
@@ -216,7 +219,6 @@ function draw() {
   if (frameCount === 1) memoryBuffer.image(cam, 0, 0, pW, pH);
   
   // --- RENDER ORDER: NEGATIV, HEAL, RECORD---
-  //
   buildNegativeImage(); 
   healMemory(); 
   destroyAndRecordImage(); 
@@ -267,6 +269,9 @@ function calculateLayout() {
   let aspect = (cam.elt.videoWidth > 0) ? (cam.elt.videoWidth / cam.elt.videoHeight) : (4 / 3);
   pW = 640; // processing width– relativ low wg performance
   pH = floor(pW / aspect);
+  
+  // Set stroke weight scaling dynamically based on window width
+  dynamicStrokeWeight = (windowWidth * 0.00075) * GLOBAL_STROKE_SCALE;
 }
 
 function initBuffers() {
@@ -329,7 +334,7 @@ function drawContinuousSeismographLine(targetX, targetY, isVisible = true) {
   // line zeichent sich nur wenn curser bew
   if (isVisible) {
     gridBuffer.push(); gridBuffer.blendMode(BLEND); gridBuffer.stroke(40, 30, 60, 150); 
-    gridBuffer.strokeWeight(LINIEN_DICKE); gridBuffer.line(prevLineX, prevLineY, targetX, targetY); gridBuffer.pop();
+    gridBuffer.strokeWeight(dynamicStrokeWeight); gridBuffer.line(prevLineX, prevLineY, targetX, targetY); gridBuffer.pop();
   }
 
   // mouse dx-> richtung ermitteln
@@ -352,7 +357,8 @@ function drawContinuousSeismographLine(targetX, targetY, isVisible = true) {
       angle = (angle > 0) ? constrain(angle, limitInRadians, PI - limitInRadians) : constrain(angle, -PI + limitInRadians, -limitInRadians);
       nx = cos(angle); ny = sin(angle);
 
-      gridBuffer.push(); gridBuffer.blendMode(BLEND); gridBuffer.stroke(20, 15, 30, 240); gridBuffer.strokeWeight(KREUZ_STRICH_DICKE);
+      gridBuffer.push(); gridBuffer.blendMode(BLEND); gridBuffer.stroke(20, 15, 30, 240); 
+      gridBuffer.strokeWeight(dynamicStrokeWeight);
       gridBuffer.line(targetX - nx * KREUZ_STRICH_LAENGE, targetY - ny * KREUZ_STRICH_LAENGE, targetX + nx * KREUZ_STRICH_LAENGE, targetY + ny * KREUZ_STRICH_LAENGE);
       gridBuffer.pop();
     }
@@ -466,7 +472,7 @@ function destroyAndRecordImage() {
     if (!pauseCircleDrawnThisSession && prevLineX !== null && prevLineY !== null) {
       let circleDiameter = rowMaxHeight * KREIS_GROESSE_FAKTOR;
       gridBuffer.push(); gridBuffer.blendMode(DIFFERENCE); gridBuffer.noFill(); gridBuffer.stroke(255, KREIS_DECKKRAFT); 
-      gridBuffer.strokeWeight(LINIEN_DICKE); gridBuffer.ellipse(prevLineX, prevLineY, circleDiameter, circleDiameter); gridBuffer.pop();
+      gridBuffer.strokeWeight(dynamicStrokeWeight); gridBuffer.ellipse(prevLineX, prevLineY, circleDiameter, circleDiameter); gridBuffer.pop();
       pauseCircleDrawnThisSession = true;
     }
   } else {
@@ -512,7 +518,8 @@ function destroyAndRecordImage() {
     let realWidth = max(maxX - minX, 15), realHeight = max(maxY - minY, 15);
     // seisomo line height mappingg from intensity von movement 
     let targetWidth = constrain(map(avgIntensity, 0.04, 0.7, 0, 200), 0, 160);
-    let targetHeight = constrain(map(avgIntensity, 0.04, 0.7, 0, 150), 0, 160);
+    // Reduced maximum heights slightly as requested
+    let targetHeight = constrain(map(avgIntensity, 0.04, 0.7, 0, 90), 0, 100);
     if (targetHeight > rowMaxHeight) rowMaxHeight = targetHeight;
     let stepSize = (targetWidth * 0.45) * GESCHWINDIGKEITS_BREMSE;
     
@@ -665,7 +672,7 @@ function drawMouseInterface(mX, mY, rectSize, targetGraphics) {
   //outlines
   g.push();
   if (g.blendMode) g.blendMode(BLEND);
-  g.stroke(0); g.strokeWeight(0.9); g.noFill();
+  g.stroke(0); g.strokeWeight(dynamicStrokeWeight); g.noFill();
   g.rect(outerX, outerY, MAX_RECT_SIZE, MAX_RECT_SIZE);
   g.rect(innerX, innerY, rectSize, rectSize);
 
@@ -677,6 +684,7 @@ function drawMouseInterface(mX, mY, rectSize, targetGraphics) {
     let currentRadius = MAX_RECT_SIZE * 1.5 * starGrowthFactor;
     let arrowLength = 24 * constrain(map(starGrowthFactor, 0.30, 1.0, 0.0, 1.0), 0.0, 1.0); 
 
+    g.strokeWeight(dynamicStrokeWeight); // ensure internal lines match the borders
     // 8 linien nach außen
     for (let i = 0; i < 8; i++) {
       let angle = (TWO_PI / 8) * i;
